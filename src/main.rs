@@ -181,7 +181,7 @@ impl Buffer {
         self.data.truncate(number_of_lines-empty_trailing_lines_counter);
     }
 
-    fn get_eol_position(&self, line_number: usize) -> usize {
+    fn get_line_length(&self, line_number: usize) -> usize {
         if line_number < 0 || line_number >= self.data.len() {
             return 0;
         }
@@ -278,7 +278,6 @@ fn save_to_file(filename: &OsString, buffer: &Buffer) {
     } else {
        panic!("Couldn't open file for writing.");
     }
-
 }
 
 fn read_file_as_string(filename: &OsString) -> Option<String> {
@@ -301,8 +300,65 @@ fn get_filename_or_exit() -> OsString {
     cli_arguments.skip(1).next().unwrap()
 }
 
-fn main() {
+pub fn get_next_cursor(current_cursor: &Cursor, buffer: &Buffer, direction: Key) -> Cursor {
+    let &Cursor{x, y} = current_cursor;
 
+    let valid_movement: bool = match (x, y, direction) {
+        // We can only go up if we're somewhere other than the first line
+        (_, y, Key::Up) if y > 0 => true,
+        // We can only go down if there's more lines in the buffer "below"
+        (_, y, Key::Down) if y + 1 < buffer.count_lines() => true,
+        // Valid left movements are when in the middle of a line or at the
+        // beginning of a line other than the first one
+        (x, y, Key::Left) if x > 0 || y > 0 => true,
+        // We can only go right if we haven't reach the end of the last line
+        (x, y, Key::Right) if x < buffer.get_line_length(y) || y < buffer.count_lines() => true,
+        _ => false
+    };
+
+    if !valid_movement { return Cursor::new(x, y); }
+
+    match direction {
+        Key::Left  => {
+            // if we're at the beginning of a line, jump back to the previous
+            // one if possible
+            if y > 0 && x == 0 {
+                Cursor::new(buffer.get_line_length(y-1), y-1)
+            } else {
+                Cursor::new(x-1, y)
+            }
+        },
+        Key::Right => {
+            // if we're at the end of a line, jump to the beginning of the next
+            // one
+            if y + 1 < buffer.count_lines() && x == buffer.get_line_length(y) {
+                Cursor::new(0, y+1)
+            } else {
+                Cursor::new(x+1, y)
+            }
+        },
+        Key::Up    => {
+            // if previous line's length is lower than x, go to it's EOL
+            if buffer.get_line_length(y-1) < x {
+                Cursor::new(buffer.get_line_length(y-1), y-1)
+            } else {
+                Cursor::new(x, y-1)
+            }
+        }
+        Key::Down  => {
+            // if next line's length is lower than x, go to it's EOL
+            if buffer.get_line_length(y+1) < x {
+                Cursor::new(buffer.get_line_length(y+1), y+1)
+            } else {
+                Cursor::new(x, y+1)
+            }
+        },
+        _          => unreachable!()
+    }
+
+}
+
+fn main() {
     let filename = get_filename_or_exit();
     let display = Display::new();
     let mut cursor = Cursor::new(0, 0);
@@ -322,41 +378,10 @@ fn main() {
                 match key {
                     Key::Ctrl('q')       => { break; },
                     Key::Ctrl('s')       => { save_to_file(&filename, &buffer); },
-                    Key::Right           => {
-                        if cursor.x + 1 < buffer.get_eol_position(cursor.y) + 1 {
-                            cursor.x += 1;
-                            display.render_cursor(&cursor);
-                        }
-                    },
-                    Key::Left            => {
-                        if cursor.x > 0 {
-                            cursor.x -= 1;
-                            display.render_cursor(&cursor);
-                        }
-                    },
-                    Key::Down            => {
-                        if cursor.y + 1 < buffer.count_lines() {
-                            let next_line_length = buffer.get_eol_position(cursor.y + 1);
-                            cursor.y += 1;
-                            if cursor.x > next_line_length {
-                                cursor.x = next_line_length;
-                            }
-                            display.render_cursor(&cursor);
-                        }
-                    },
-                    Key::Up              => {
-                        if cursor.y > 0 {
-                            let previous_line = cursor.y-1;
-                            let previous_line_length = buffer.get_eol_position(previous_line);
-                            if cursor.x > previous_line_length {
-                                cursor.jump_to(previous_line_length, previous_line);
-                            } else {
-                                cursor.y -= 1;
-                            }
-
-                            display.render_cursor(&cursor);
-                        }
-                    }
+                    Key::Right           => { cursor = get_next_cursor(&cursor, &buffer, key); },
+                    Key::Left            => { cursor = get_next_cursor(&cursor, &buffer, key); },
+                    Key::Down            => { cursor = get_next_cursor(&cursor, &buffer, key); },
+                    Key::Up              => { cursor = get_next_cursor(&cursor, &buffer, key); },
                     Key::Char(character) => {
                         let changes = buffer.write_char(&cursor, character);
                         display.render_buffer_changes(&buffer, changes);
@@ -366,7 +391,7 @@ fn main() {
                     Key::Backspace       => {
                         let mut previous_line_length = 0;
                         if cursor.y > 0 {
-                             previous_line_length = buffer.get_eol_position(cursor.y-1);
+                             previous_line_length = buffer.get_line_length(cursor.y-1);
                         }
                         let changes = buffer.backspace(&cursor);
                         if cursor.x == 0 && cursor.y > 0 {
@@ -390,6 +415,7 @@ fn main() {
             Err(e) => panic!("{}", e),
             _ => { }
         };
+        display.render_cursor(&cursor);
         display.flush();
     }
 }
@@ -399,6 +425,7 @@ fn main() {
 mod tests {
 
     use super::*;
+    use rustbox::Key;
 
     fn enums_are_equal(changes: Changes, expected: Changes) -> bool {
         match (changes, expected) {
@@ -533,6 +560,104 @@ mod tests {
         buffer.backspace(&cursor);
         assert_eq!(buffer.count_lines(), 1);
         assert_eq!(buffer.get_line(0), "SomethingElse");
+    }
+
+    #[test]
+    fn test_cursor_movements_off_limits() {
+        let empty_buffer = Buffer::new();
+        let original_cursor = Cursor::new(0, 0);
+
+        // try to go down, nothing happens
+        let next_cursor = get_next_cursor(&original_cursor, &empty_buffer, Key::Down);
+        assert_eq!(next_cursor.x, original_cursor.x);
+        assert_eq!(next_cursor.y, original_cursor.y);
+
+        // try to go up, nothing happens
+        let next_cursor = get_next_cursor(&original_cursor, &empty_buffer, Key::Up);
+        assert_eq!(next_cursor.x, original_cursor.x);
+        assert_eq!(next_cursor.y, original_cursor.y);
+
+        // try to go left, nothing happens
+        let next_cursor = get_next_cursor(&original_cursor, &empty_buffer, Key::Left);
+        assert_eq!(next_cursor.x, original_cursor.x);
+        assert_eq!(next_cursor.y, original_cursor.y);
+
+        // try to go right, nothing happens
+        let next_cursor = get_next_cursor(&original_cursor, &empty_buffer, Key::Right);
+        assert_eq!(next_cursor.x, original_cursor.x);
+        assert_eq!(next_cursor.y, original_cursor.y);
+    }
+
+    #[test]
+    fn test_cursor_movements_off_limits_exceptions() {
+        let line_0 = "I'm Line 0";
+        let line_1 = "And here's Line 1.";
+        let line_2 = "Line 1 here";
+        let buffer = Buffer::from_string(&[line_0, line_1, line_2].join("\n"));
+
+        // Moving left at the beginning of a line should make the cursor
+        // jump to the last character of previous line.
+        let original_cursor = Cursor::new(0, 1);
+        let expected_cursor = Cursor::new(line_0.len(), 0);
+        let next_cursor = get_next_cursor(&original_cursor, &buffer, Key::Left);
+        assert_eq!(next_cursor.x, expected_cursor.x);
+        assert_eq!(next_cursor.y, expected_cursor.y);
+
+        // Moving right at the end of a line should make the cursor
+        // jump to the first character of the next line.
+        let original_cursor = Cursor::new(line_1.len(), 1);
+        let expected_cursor = Cursor::new(0, 2);
+        let next_cursor = get_next_cursor(&original_cursor, &buffer, Key::Right);
+        assert_eq!(next_cursor.x, expected_cursor.x);
+        assert_eq!(next_cursor.y, expected_cursor.y);
+
+        // Moving down when the next line is shorter, should move the cursor to EOL
+        let original_cursor = Cursor::new(line_1.len(), 1);
+        let expected_cursor = Cursor::new(line_2.len(), 2);
+        let next_cursor = get_next_cursor(&original_cursor, &buffer, Key::Down);
+        assert_eq!(next_cursor.x, expected_cursor.x);
+        assert_eq!(next_cursor.y, expected_cursor.y);
+
+        // Moving up when the previous line is shorter, should move the cursor to EOL
+        let original_cursor = Cursor::new(line_1.len(), 1);
+        let expected_cursor = Cursor::new(line_0.len(), 0);
+        let next_cursor = get_next_cursor(&original_cursor, &buffer, Key::Up);
+        assert_eq!(next_cursor.x, expected_cursor.x);
+        assert_eq!(next_cursor.y, expected_cursor.y);
+
+    }
+
+    #[test]
+    fn test_cursor_movements_happy_path() {
+        let buffer = Buffer::from_string("I'm Line 0\nLine 1 here\nAnd here's Line 2.");
+
+        // move from the middle of the line to the left
+        let original_cursor = Cursor::new(3, 0);
+        let expected_cursor = Cursor::new(original_cursor.x - 1, original_cursor.y);
+        let next_cursor = get_next_cursor(&original_cursor, &buffer, Key::Left);
+        assert_eq!(next_cursor.x, expected_cursor.x);
+        assert_eq!(next_cursor.y, expected_cursor.y);
+
+        // move from the middle of the line to the right
+        let original_cursor = Cursor::new(3, 0);
+        let expected_cursor = Cursor::new(original_cursor.x + 1, original_cursor.y);
+        let next_cursor = get_next_cursor(&original_cursor, &buffer, Key::Right);
+        assert_eq!(next_cursor.x, expected_cursor.x);
+        assert_eq!(next_cursor.y, expected_cursor.y);
+
+        // move up
+        let original_cursor = Cursor::new(3, 1);
+        let expected_cursor = Cursor::new(original_cursor.x, original_cursor.y-1);
+        let next_cursor = get_next_cursor(&original_cursor, &buffer, Key::Up);
+        assert_eq!(next_cursor.x, expected_cursor.x);
+        assert_eq!(next_cursor.y, expected_cursor.y);
+
+        // move down
+        let original_cursor = Cursor::new(3, 1);
+        let expected_cursor = Cursor::new(original_cursor.x, original_cursor.y+1);
+        let next_cursor = get_next_cursor(&original_cursor, &buffer, Key::Down);
+        assert_eq!(next_cursor.x, expected_cursor.x);
+        assert_eq!(next_cursor.y, expected_cursor.y);
     }
 
     // #[test]
