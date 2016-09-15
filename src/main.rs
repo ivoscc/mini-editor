@@ -28,29 +28,6 @@ impl Cursor {
     fn new(x: usize, y: usize) -> Cursor {
         Cursor {x: x, y: y}
     }
-
-    fn next(&mut self) {
-        self.x += 1;
-    }
-
-    fn back(&mut self) {
-        if self.x > 0 {
-            self.x -= 1;
-        } else if self.y > 0 {
-            self.y -= 1;
-        }
-    }
-
-    fn newline(&mut self) {
-        self.x = 0;
-        self.y += 1;
-    }
-
-    fn jump_to(&mut self, x: usize, y: usize) {
-        self.x = x;
-        self.y = y;
-    }
-
 }
 
 pub struct Display {
@@ -71,7 +48,7 @@ impl Display {
     }
 
     fn clear_line(&self, line_number: usize) {
-        let blank_line: String = (0..self.width).into_iter().map(|x| " ").collect();
+        let blank_line: String = (0..self.width).into_iter().map(|_| " ").collect();
         self.rustbox.print(0, line_number,
                            rustbox::RB_NORMAL,
                            Color::White,
@@ -104,7 +81,7 @@ impl Display {
                     );
                 }
             }
-            BufferChanges::Char(character) => {},  // not implemented
+            BufferChanges::Char(_) => {},  // not implemented
             BufferChanges::None            => {},
         };
     }
@@ -169,20 +146,8 @@ impl Buffer {
         }
     }
 
-    fn remove_trailing_empty_lines(&mut self,) {
-        let number_of_lines = self.count_lines();
-        let mut empty_trailing_lines_counter = 0;
-        for line_number in (0..number_of_lines).rev() {
-            if !self.data[line_number].is_empty() {
-                break;
-            }
-            empty_trailing_lines_counter += 1;
-        }
-        self.data.truncate(number_of_lines-empty_trailing_lines_counter);
-    }
-
     fn get_line_length(&self, line_number: usize) -> usize {
-        if line_number < 0 || line_number >= self.data.len() {
+        if line_number >= self.data.len() {
             return 0;
         }
 
@@ -274,7 +239,7 @@ fn save_to_file(filename: &OsString, buffer: &Buffer) {
     }).cloned().collect::<String>();
 
     if let Ok(mut file) = file {
-        file.write(string.as_bytes());
+        let _ = file.write(string.as_bytes());
     } else {
        panic!("Couldn't open file for writing.");
     }
@@ -284,7 +249,7 @@ fn read_file_as_string(filename: &OsString) -> Option<String> {
     let file = OpenOptions::new().read(true).open(filename);
     if let Ok(mut file) = file {
         let mut file_contents = String::new();
-        if let Ok(size) = file.read_to_string(&mut file_contents) {
+        if let Ok(_) = file.read_to_string(&mut file_contents) {
             return Some(file_contents);
         }
     }
