@@ -12,7 +12,7 @@ use rustbox::Key;
 // assumed as a reasonable? line length
 const LINE_VECTOR_CAPACITY: usize = 100;
 
-pub enum Changes {
+pub enum BufferChanges {
     Char((usize, usize)),
     Lines(Vec<usize>),
     Buffer,
@@ -92,10 +92,10 @@ impl Display {
                            line);
     }
 
-    fn render_buffer_changes(&self, buffer: &Buffer, changes: Changes) {
+    fn render_buffer_changes(&self, buffer: &Buffer, changes: BufferChanges) {
         match changes {
-            Changes::Buffer          => self.render_buffer(buffer),
-            Changes::Lines(lines)    => {
+            BufferChanges::Buffer          => self.render_buffer(buffer),
+            BufferChanges::Lines(lines)    => {
                 for line_number in lines {
 
                     self.render_line(
@@ -104,8 +104,8 @@ impl Display {
                     );
                 }
             }
-            Changes::Char(character) => {},  // not implemented
-            Changes::None            => {},
+            BufferChanges::Char(character) => {},  // not implemented
+            BufferChanges::None            => {},
         };
     }
 
@@ -137,7 +137,7 @@ impl Buffer {
         Buffer {data: data}
     }
 
-    fn write_char(&mut self, cursor: &Cursor, character: char) -> Changes {
+    fn write_char(&mut self, cursor: &Cursor, character: char) -> BufferChanges {
         let &Cursor{x, y} = cursor;
         self.fill_lines(y);
 
@@ -149,10 +149,10 @@ impl Buffer {
         } else {
             line.push(character);
         }
-        Changes::Lines(vec![y])
+        BufferChanges::Lines(vec![y])
     }
 
-    fn newline(&mut self, cursor: &Cursor) -> Changes {
+    fn newline(&mut self, cursor: &Cursor) -> BufferChanges {
         let &Cursor{x, y} = cursor;
         // make sure we have enough lines
         self.fill_lines(y);
@@ -163,9 +163,9 @@ impl Buffer {
             let mut new_line = self.data.get_mut(y+1).unwrap();
             new_line.extend(rest);
             // we could optimize here if we have little following lines
-            Changes::Buffer
+            BufferChanges::Buffer
         } else {
-            Changes::None
+            BufferChanges::None
         }
     }
 
@@ -205,14 +205,14 @@ impl Buffer {
         first_line.extend(next_line_content.chars().into_iter());
     }
 
-    fn backspace(&mut self, cursor: &Cursor) -> Changes {
+    fn backspace(&mut self, cursor: &Cursor) -> BufferChanges {
         let &Cursor{x, y} = cursor;
-        let mut result = Changes::None;
+        let mut result = BufferChanges::None;
 
         if let Some(line) = self.data.get_mut(y) {
             if line.len() + 1 > x && x > 0 {
                 line.remove(x-1);
-                result = Changes::Buffer;
+                result = BufferChanges::Buffer;
             }
         }
 
@@ -221,7 +221,7 @@ impl Buffer {
         if x == 0 && y > 0 {
             self.slurp_next_line(y-1);
             self.remove_line(y);
-            result = Changes::Buffer;
+            result = BufferChanges::Buffer;
         }
 
         result
@@ -338,7 +338,7 @@ pub fn get_next_cursor(current_cursor: &Cursor, buffer: &Buffer, direction: Key)
             }
         },
         Key::Up    => {
-            // if previous line's length is lower than x, go to it's EOL
+            // if previous line's length is lower than x, go to its EOL
             if buffer.get_line_length(y-1) < x {
                 Cursor::new(buffer.get_line_length(y-1), y-1)
             } else {
@@ -346,7 +346,7 @@ pub fn get_next_cursor(current_cursor: &Cursor, buffer: &Buffer, direction: Key)
             }
         }
         Key::Down  => {
-            // if next line's length is lower than x, go to it's EOL
+            // if next line's length is lower than x, go to its EOL
             if buffer.get_line_length(y+1) < x {
                 Cursor::new(buffer.get_line_length(y+1), y+1)
             } else {
@@ -355,8 +355,38 @@ pub fn get_next_cursor(current_cursor: &Cursor, buffer: &Buffer, direction: Key)
         },
         _          => unreachable!()
     }
-
 }
+
+
+fn apply_command(key: Key, buffer: &mut Buffer, cursor: &Cursor) -> (Option<BufferChanges>, Cursor) {
+    match key {
+        Key::Char(character) => {
+            (Some(buffer.write_char(cursor, character)), Cursor::new(cursor.x + 1, cursor.y))
+        },
+        Key::Enter           => {
+            let buffer_changes = buffer.newline(cursor);
+            let new_cursor = Cursor::new(0, cursor.y + 1);
+            (Some(buffer_changes), new_cursor)
+        },
+        Key::Backspace       => {
+            let mut previous_line_length = 0;
+            if cursor.y > 0 {
+                previous_line_length = buffer.get_line_length(cursor.y-1);
+            }
+            let changes = buffer.backspace(&cursor);
+            let new_cursor = if cursor.x == 0 && cursor.y > 0 {
+                Cursor::new(previous_line_length, cursor.y - 1)
+            } else if cursor.x > 0 {
+                Cursor::new(cursor.x - 1, cursor.y)
+            } else {
+                Cursor::new(cursor.x, cursor.y)
+            };
+            (Some(changes), new_cursor)
+        }
+        _ => {(None, Cursor::new(cursor.x, cursor.y))}
+    }
+}
+
 
 fn main() {
     let filename = get_filename_or_exit();
@@ -373,6 +403,7 @@ fn main() {
     display.flush();
 
     loop {
+        let mut buffer_changes: Option<BufferChanges> = None;
         match display.rustbox.poll_event(false) {
             Ok(rustbox::Event::KeyEvent(key)) => {
                 match key {
@@ -382,39 +413,20 @@ fn main() {
                     Key::Left            => { cursor = get_next_cursor(&cursor, &buffer, key); },
                     Key::Down            => { cursor = get_next_cursor(&cursor, &buffer, key); },
                     Key::Up              => { cursor = get_next_cursor(&cursor, &buffer, key); },
-                    Key::Char(character) => {
-                        let changes = buffer.write_char(&cursor, character);
-                        display.render_buffer_changes(&buffer, changes);
-                        cursor.next();
-                        display.render_cursor(&cursor);
+                    _ => {
+                        let result = apply_command(key, &mut buffer, &cursor);
+                        buffer_changes = result.0;
+                        cursor = result.1;
                     },
-                    Key::Backspace       => {
-                        let mut previous_line_length = 0;
-                        if cursor.y > 0 {
-                             previous_line_length = buffer.get_line_length(cursor.y-1);
-                        }
-                        let changes = buffer.backspace(&cursor);
-                        if cursor.x == 0 && cursor.y > 0 {
-                            cursor.y -= 1;
-                            cursor.x = previous_line_length;
-                        } else if cursor.x > 0 {
-                            cursor.x -= 1;
-                        }
-                        display.render_buffer_changes(&buffer, changes);
-                        display.render_cursor(&cursor);
-                    },
-                    Key::Enter           => {
-                        let changes = buffer.newline(&cursor);
-                        display.render_buffer_changes(&buffer, changes);
-                        cursor.newline();
-                        display.render_cursor(&cursor);
-                    },
-                    _ => {}
                 }
             },
-            Err(e) => panic!("{}", e),
             _ => { }
         };
+
+        // only render buffer changes if there's been any
+        if let Some(buffer_changes) = buffer_changes {
+            display.render_buffer_changes(&buffer, buffer_changes);
+        }
         display.render_cursor(&cursor);
         display.flush();
     }
@@ -427,12 +439,12 @@ mod tests {
     use super::*;
     use rustbox::Key;
 
-    fn enums_are_equal(changes: Changes, expected: Changes) -> bool {
+    fn enums_are_equal(changes: BufferChanges, expected: BufferChanges) -> bool {
         match (changes, expected) {
-            (Changes::None, Changes::None) => true,
-            (Changes::Buffer, Changes::Buffer) => true,
-            (Changes::Char(pair_0), Changes::Char(pair_1)) => pair_0 == pair_1,
-            (Changes::Lines(vec_0), Changes::Lines(vec_1)) => vec_0 == vec_1,
+            (BufferChanges::None, BufferChanges::None) => true,
+            (BufferChanges::Buffer, BufferChanges::Buffer) => true,
+            (BufferChanges::Char(pair_0), BufferChanges::Char(pair_1)) => pair_0 == pair_1,
+            (BufferChanges::Lines(vec_0), BufferChanges::Lines(vec_1)) => vec_0 == vec_1,
             _ => false,
         }
     }
@@ -519,8 +531,8 @@ mod tests {
     #[test]
     fn test_delete_one_character() {
         let mut buffer_0 = Buffer::from_string("I'm a typpo.");
-        // let expected_changes_0 = Changes::Lines(vec![0]);
-        let expected_changes_0 = Changes::Buffer;
+        // let expected_changes_0 = BufferChanges::Lines(vec![0]);
+        let expected_changes_0 = BufferChanges::Buffer;
         let cursor = Cursor::new(9, 0);
         let changes_0 = buffer_0.backspace(&cursor);
         assert_eq!(true, enums_are_equal(changes_0, expected_changes_0));
@@ -529,7 +541,7 @@ mod tests {
 
         // cursor at (0,0), should do nothing
         let mut buffer_1 = Buffer::from_string("I'm still a tipo");
-        let expected_changes_1 = Changes::None;
+        let expected_changes_1 = BufferChanges::None;
         let cursor = Cursor::new(0, 0);
         let changes_1 = buffer_1.backspace(&cursor);
         assert_eq!(true, enums_are_equal(changes_1, expected_changes_1));
@@ -675,5 +687,4 @@ mod tests {
     // #[test]
     // fn prevent_moving_cursor_beyond_eol() {
     // }
-
 }
