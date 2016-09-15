@@ -1,0 +1,7 @@
+[package]
+name = "editor2"
+version = "0.1.0"
+authors = ["Ivo Sánchez Checa <ivoscc@gmail.com>"]
+
+[dependencies]
+rustbox = "*"
