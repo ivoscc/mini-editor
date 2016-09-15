@@ -267,9 +267,11 @@ impl Buffer {
 }
 
 fn save_to_file(filename: &OsString, buffer: &Buffer) {
-
+    let new_line = ['\n'];
     let file = OpenOptions::new().write(true).truncate(true).create(true).open(&filename);
-    let string = buffer.data.iter().flat_map(|line| line.into_iter()).cloned().collect::<String>();
+    let string = buffer.data.iter().flat_map(|line| {
+        line.iter().chain(new_line.iter())
+    }).cloned().collect::<String>();
 
     if let Ok(mut file) = file {
         file.write(string.as_bytes());
@@ -279,32 +281,36 @@ fn save_to_file(filename: &OsString, buffer: &Buffer) {
 
 }
 
-fn main() {
+fn read_file_as_string(filename: &OsString) -> Option<String> {
+    let file = OpenOptions::new().read(true).open(filename);
+    if let Ok(mut file) = file {
+        let mut file_contents = String::new();
+        if let Ok(size) = file.read_to_string(&mut file_contents) {
+            return Some(file_contents);
+        }
+    }
+    None
+}
 
+fn get_filename_or_exit() -> OsString {
     let cli_arguments = env::args_os();
     if cli_arguments.len() < 2 {
         println!("Please provide a filename to read or create.");
         std::process::exit(1);
     }
+    cli_arguments.skip(1).next().unwrap()
+}
 
-    let filename = cli_arguments.skip(1).next().unwrap();
-    let file = OpenOptions::new()
-        .read(true)
-        .open(&filename);
+fn main() {
 
-    let mut buffer = if let Ok(mut file) = file {
-        let mut file_contents = String::new();
-        if let Ok(size) = file.read_to_string(&mut file_contents) {
-            Buffer::from_string(&file_contents)
-        } else {
-            Buffer::new()
-        }
+    let filename = get_filename_or_exit();
+    let display = Display::new();
+    let mut cursor = Cursor::new(0, 0);
+    let mut buffer = if let Some(file_contents) = read_file_as_string(&filename) {
+        Buffer::from_string(&file_contents)
     } else {
         Buffer::new()
     };
-
-    let mut cursor = Cursor::new(0, 0);
-    let display = Display::new();
 
     display.render_buffer(&buffer);
     display.render_cursor(&cursor);
@@ -315,9 +321,7 @@ fn main() {
             Ok(rustbox::Event::KeyEvent(key)) => {
                 match key {
                     Key::Ctrl('q')       => { break; },
-                    Key::Ctrl('s')       => {
-                        save_to_file(&filename, &buffer);
-                    },
+                    Key::Ctrl('s')       => { save_to_file(&filename, &buffer); },
                     Key::Right           => {
                         if cursor.x + 1 < buffer.get_eol_position(cursor.y) + 1 {
                             cursor.x += 1;
