@@ -1,16 +1,38 @@
+#[macro_use]
+extern crate lazy_static;
 extern crate rustbox;
 
-use std::env;
+use std::collections::HashSet;
 use std::default::Default;
+use std::env;
+use std::ffi::OsString;
 use std::fs::{OpenOptions};
 use std::io::{Read, Write};
-use std::ffi::OsString;
 
-use rustbox::{Color, RustBox};
 use rustbox::Key;
+use rustbox::{Color, RustBox};
 
 // assumed as a reasonable? line length
 const LINE_VECTOR_CAPACITY: usize = 100;
+
+
+lazy_static! {
+    static ref RUST_KEYWORDS: HashSet<&'static str> = [
+        "abstract", "alignof", "as", "become", "box",
+        "break", "const", "continue", "crate", "do",
+        "else", "enum", "extern", "false", "final",
+        "fn", "for", "if", "impl", "in", "let", "loop",
+        "macro", "match", "mod", "move", "mut", "offsetof",
+        "override", "priv", "proc", "pub", "pure", "ref",
+        "return", "Self", "self", "sizeof", "static",
+        "struct", "super", "trait", "true", "type",
+        "typeof", "unsafe", "unsized", "use", "virtual",
+        "where", "while", "yield"
+    ].iter().cloned().collect();
+    static ref RUST_SYMBOLS: HashSet<&'static str> = [
+        ":", ";", "(", ")", "[", "]", "{", "}", "=", "<", ">", "->", "\"",
+    ].iter().cloned().collect();
+}
 
 pub enum BufferChanges {
     Char((usize, usize)),
@@ -67,13 +89,88 @@ impl Display {
                                 (cursor.y - vertical_offset) as isize);
     }
 
+    fn render_word(&self, word: &str, offset: usize, line_number: usize, color: Color) -> usize {
+        let word = if word.len() == 0 {
+            " ".to_string()
+        } else if offset != 0 {
+            [" ", word].concat()
+        } else {
+            word.to_string()
+        };
+        self.rustbox.print(offset, line_number,
+                           rustbox::RB_NORMAL,
+                           color,
+                           Color::Black,
+                           &word);
+        word.len()
+    }
+
     fn render_line(&self, line: &str, line_number: usize) {
         self.clear_line(line_number);
-        self.rustbox.print(0, line_number,
-                           rustbox::RB_NORMAL,
-                           Color::White,
-                           Color::Black,
-                           line);
+        let mut offset = 0;
+        let mut is_comment = false;
+        let mut is_string = false;
+        let mut is_char = false;
+
+        for word in line.split(" ") {
+            if is_comment || word == "//" || word.starts_with("//") {
+                is_comment = true;
+                offset += self.render_word(word, offset, line_number, Color::Blue);
+            } else if RUST_KEYWORDS.contains(&word) {
+                offset += self.render_word(word, offset, line_number, Color::Green);
+            } else if word.len() == 0 {
+                offset += self.render_word(word, offset, line_number, Color::Green);
+            } else {
+                // go char by char
+                if offset != 0 {
+                    self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
+                                    Color::Default, Color::Black,
+                                    " ");
+                    offset += 1;
+                };
+                for character in word.chars() {
+                    if character == '"' && !is_string && !is_char {  // open string
+                        is_string = true;
+                        // paint string
+                        self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
+                                           Color::Yellow, Color::Black,
+                                           &character.to_string());
+                    } else if is_string && character == '"' { // close string
+                        is_string = false;
+                        // paint string
+                        self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
+                                           Color::Yellow, Color::Black,
+                                           &character.to_string());
+                    } else if is_string || is_char {
+                        // paint string
+                        self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
+                                           Color::Yellow, Color::Black,
+                                           &character.to_string());
+                    } else if character == '\'' && !is_char {  // open char
+                        is_char = true;
+                        self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
+                                            Color::Yellow, Color::Black,
+                                            &character.to_string());
+                    } else if is_char && character == '\'' {  // close char
+                        is_char = false;
+                        self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
+                                           Color::Yellow, Color::Black,
+                                           &character.to_string());
+                    } else if RUST_SYMBOLS.contains(&(character.to_string()[..])) {
+                        // paint symbol
+                        self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
+                                           Color::Red, Color::Black,
+                                           &character.to_string());
+                    } else {
+                        // normal
+                        self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
+                                           Color::Default, Color::Black,
+                                           &character.to_string());
+                    }
+                    offset += 1;
+                }
+            }
+        }
     }
 
     fn render_buffer_changes(&self, buffer: &Buffer, changes: BufferChanges) {
@@ -87,7 +184,7 @@ impl Display {
                     );
                 }
             }
-            BufferChanges::Char(_) => {},  // not implemented
+            BufferChanges::Char(_) => {unimplemented!()},
             BufferChanges::None            => {},
         };
     }

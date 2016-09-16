@@ -5,3 +5,4 @@ authors = ["Ivo Sánchez Checa <ivoscc@gmail.com>"]
 
 [dependencies]
 rustbox = "*"
+lazy_static = "*"
