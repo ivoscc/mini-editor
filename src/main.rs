@@ -34,6 +34,7 @@ pub struct Display {
     rustbox: RustBox,
     width: usize,
     height: usize,
+    vertical_offset: usize,
 }
 
 impl Display {
@@ -44,7 +45,12 @@ impl Display {
         };
         let width = rustbox.width();
         let height = rustbox.height();
-        Display { rustbox: rustbox, width: width, height: height }
+        Display {
+            rustbox: rustbox,
+            width: width,
+            height: height,
+            vertical_offset: 0
+        }
     }
 
     fn clear_line(&self, line_number: usize) {
@@ -56,8 +62,9 @@ impl Display {
                            &blank_line);
     }
 
-    fn render_cursor(&self, cursor: &Cursor) {
-        self.rustbox.set_cursor(cursor.x as isize, cursor.y as isize);
+    fn render_cursor(&self, cursor: &Cursor, vertical_offset: usize) {
+        self.rustbox.set_cursor(cursor.x as isize,
+                                (cursor.y - vertical_offset) as isize);
     }
 
     fn render_line(&self, line: &str, line_number: usize) {
@@ -74,10 +81,9 @@ impl Display {
             BufferChanges::Buffer          => self.render_buffer(buffer),
             BufferChanges::Lines(lines)    => {
                 for line_number in lines {
-
                     self.render_line(
                         &buffer.get_line(line_number),
-                        line_number
+                        line_number - self.vertical_offset
                     );
                 }
             }
@@ -88,8 +94,8 @@ impl Display {
 
     fn render_buffer(&self, buffer: &Buffer) {
         self.rustbox.clear();
-        for i in 0..buffer.count_lines() {
-            self.render_line(&buffer.get_line(i), i);
+        for i in self.vertical_offset..(self.vertical_offset + self.height) {
+            self.render_line(&buffer.get_line(i), i - self.vertical_offset);
         }
     }
 
@@ -323,39 +329,43 @@ pub fn get_next_cursor(current_cursor: &Cursor, buffer: &Buffer, direction: Key)
 }
 
 
-fn apply_command(key: Key, buffer: &mut Buffer, cursor: &Cursor) -> (Option<BufferChanges>, Cursor) {
+fn apply_command(key: Key, buffer: &mut Buffer, cursor: &Cursor) -> (BufferChanges, Cursor) {
     match key {
         Key::Char(character) => {
-            (Some(buffer.write_char(cursor, character)), Cursor::new(cursor.x + 1, cursor.y))
+            (buffer.write_char(cursor, character), Cursor::new(cursor.x + 1, cursor.y))
         },
         Key::Enter           => {
             let buffer_changes = buffer.newline(cursor);
             let new_cursor = Cursor::new(0, cursor.y + 1);
-            (Some(buffer_changes), new_cursor)
+            (buffer_changes, new_cursor)
         },
         Key::Backspace       => {
-            let mut previous_line_length = 0;
-            if cursor.y > 0 {
-                previous_line_length = buffer.get_line_length(cursor.y-1);
-            }
+            let previous_line_length = if cursor.y > 0 {
+                buffer.get_line_length(cursor.y-1)
+            } else {
+                0
+            };
+
             let changes = buffer.backspace(&cursor);
-            let new_cursor = if cursor.x == 0 && cursor.y > 0 {
-                Cursor::new(previous_line_length, cursor.y - 1)
-            } else if cursor.x > 0 {
+
+            let new_cursor = if cursor.x > 0 {
                 Cursor::new(cursor.x - 1, cursor.y)
+            } else if cursor.y > 0 {
+                Cursor::new(previous_line_length, cursor.y - 1)
             } else {
                 Cursor::new(cursor.x, cursor.y)
             };
-            (Some(changes), new_cursor)
+
+            (changes, new_cursor)
         }
-        _ => {(None, Cursor::new(cursor.x, cursor.y))}
+        _ => {(BufferChanges::None, Cursor::new(cursor.x, cursor.y))}
     }
 }
 
 
 fn main() {
     let filename = get_filename_or_exit();
-    let display = Display::new();
+    let mut display = Display::new();
     let mut cursor = Cursor::new(0, 0);
     let mut buffer = if let Some(file_contents) = read_file_as_string(&filename) {
         Buffer::from_string(&file_contents)
@@ -364,11 +374,11 @@ fn main() {
     };
 
     display.render_buffer(&buffer);
-    display.render_cursor(&cursor);
+    display.render_cursor(&cursor, display.vertical_offset);
     display.flush();
 
     loop {
-        let mut buffer_changes: Option<BufferChanges> = None;
+        let mut buffer_changes = BufferChanges::None;
         match display.rustbox.poll_event(false) {
             Ok(rustbox::Event::KeyEvent(key)) => {
                 match key {
@@ -388,11 +398,20 @@ fn main() {
             _ => { }
         };
 
-        // only render buffer changes if there's been any
-        if let Some(buffer_changes) = buffer_changes {
-            display.render_buffer_changes(&buffer, buffer_changes);
+        if cursor.y >= display.vertical_offset + display.height {
+            // scroll down
+            display.vertical_offset += 1;
+            buffer_changes = BufferChanges::Buffer;
         }
-        display.render_cursor(&cursor);
+        else if cursor.y < display.vertical_offset {
+            // scroll up
+            display.vertical_offset -= 1;
+            buffer_changes = BufferChanges::Buffer;
+        }
+
+        // only render buffer changes if there's been any
+        display.render_buffer_changes(&buffer, buffer_changes);
+        display.render_cursor(&cursor, display.vertical_offset);
         display.flush();
     }
 }
