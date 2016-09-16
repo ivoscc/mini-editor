@@ -12,10 +12,11 @@ use std::io::{Read, Write};
 use rustbox::Key;
 use rustbox::{Color, RustBox};
 
-// assumed as a reasonable? line length
+// assume as a reasonable? line length
 const LINE_VECTOR_CAPACITY: usize = 100;
 
 
+// Hardcoded keywords and symbols
 lazy_static! {
     static ref RUST_KEYWORDS: HashSet<&'static str> = [
         "abstract", "alignof", "as", "become", "box",
@@ -30,7 +31,7 @@ lazy_static! {
         "where", "while", "yield"
     ].iter().cloned().collect();
     static ref RUST_SYMBOLS: HashSet<&'static str> = [
-        ":", ";", "(", ")", "[", "]", "{", "}", "=", "<", ">", "->", "\"",
+        ":", ";", "(", ")", "[", "]", "{", "}", "=", "<", ">", "-", "+", "\"", "'"
     ].iter().cloned().collect();
 }
 
