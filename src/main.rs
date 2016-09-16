@@ -30,8 +30,15 @@ lazy_static! {
         "typeof", "unsafe", "unsized", "use", "virtual",
         "where", "while", "yield"
     ].iter().cloned().collect();
+
     static ref RUST_SYMBOLS: HashSet<&'static str> = [
-        ":", ";", "(", ")", "[", "]", "{", "}", "=", "<", ">", "-", "+", "\"", "'"
+        ":", ";", "(", ")", "[", "]", "{", "}", "=",
+        "<", ">", "-", "+", "\"", "'", "&"
+    ].iter().cloned().collect();
+
+    static ref RUST_PRIMITIVES: HashSet<&'static str> = [
+        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+        "isize", "usize", "f32", "f64"
     ].iter().cloned().collect();
 }
 
@@ -118,9 +125,11 @@ impl Display {
                 is_comment = true;
                 offset += self.render_word(word, offset, line_number, Color::Blue);
             } else if RUST_KEYWORDS.contains(&word) {
-                offset += self.render_word(word, offset, line_number, Color::Green);
+                offset += self.render_word(word, offset, line_number, Color::Red);
+            } else if RUST_PRIMITIVES.contains(&word) {
+                offset += self.render_word(word, offset, line_number, Color::Cyan);
             } else if word.len() == 0 {
-                offset += self.render_word(word, offset, line_number, Color::Green);
+                offset += self.render_word(word, offset, line_number, Color::Default);
             } else {
                 // go char by char
                 if offset != 0 {
@@ -134,33 +143,33 @@ impl Display {
                         is_string = true;
                         // paint string
                         self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
-                                           Color::Yellow, Color::Black,
+                                           Color::Green, Color::Black,
                                            &character.to_string());
                     } else if is_string && character == '"' { // close string
                         is_string = false;
                         // paint string
                         self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
-                                           Color::Yellow, Color::Black,
+                                           Color::Green, Color::Black,
                                            &character.to_string());
                     } else if is_string || is_char {
                         // paint string
                         self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
-                                           Color::Yellow, Color::Black,
+                                           Color::Green, Color::Black,
                                            &character.to_string());
                     } else if character == '\'' && !is_char {  // open char
                         is_char = true;
                         self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
-                                            Color::Yellow, Color::Black,
+                                            Color::Green, Color::Black,
                                             &character.to_string());
                     } else if is_char && character == '\'' {  // close char
                         is_char = false;
                         self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
-                                           Color::Yellow, Color::Black,
+                                           Color::Green, Color::Black,
                                            &character.to_string());
                     } else if RUST_SYMBOLS.contains(&(character.to_string()[..])) {
                         // paint symbol
                         self.rustbox.print(offset, line_number, rustbox::RB_NORMAL,
-                                           Color::Red, Color::Black,
+                                           Color::Yellow, Color::Black,
                                            &character.to_string());
                     } else {
                         // normal
