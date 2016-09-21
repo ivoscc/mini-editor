@@ -260,10 +260,6 @@ impl Buffer {
     }
 
     fn get_line_length(&self, line_number: usize) -> usize {
-        if line_number >= self.data.len() {
-            return 0;
-        }
-
         if let Some(line) = self.data.get(line_number) {
             line.len()
         } else {
@@ -472,14 +468,15 @@ fn apply_command(key: Key, buffer: &mut Buffer, cursor: &Cursor) -> (BufferChang
 
 fn main() {
     let filename = get_filename_or_exit();
-    let mut display = Display::new();
-    let mut cursor = Cursor::new(0, 0);
     let mut buffer = if let Some(file_contents) = read_file_as_string(&filename) {
         Buffer::from_string(&file_contents)
     } else {
         Buffer::new()
     };
+    let mut display = Display::new();
+    let mut cursor = Cursor::new(0, 0);
 
+    // initial render
     display.render_buffer(&buffer);
     display.render_cursor(&cursor, display.vertical_offset);
     display.flush();
@@ -491,32 +488,33 @@ fn main() {
                 match key {
                     Key::Ctrl('q')       => { break; },
                     Key::Ctrl('s')       => { save_to_file(&filename, &buffer); },
-                    Key::Right           => { cursor = get_next_cursor(&cursor, &buffer, key); },
-                    Key::Left            => { cursor = get_next_cursor(&cursor, &buffer, key); },
-                    Key::Down            => { cursor = get_next_cursor(&cursor, &buffer, key); },
-                    Key::Up              => { cursor = get_next_cursor(&cursor, &buffer, key); },
+                    Key::Ctrl('e')       => {
+                        cursor = Cursor::new( buffer.get_line_length(cursor.y), cursor.y);
+                    },
+                    Key::Ctrl('a')       => { cursor = Cursor::new( 0, cursor.y); }
+                    Key::Up | Key::Down | Key::Left | Key::Right => {
+                        cursor = get_next_cursor(&cursor, &buffer, key);
+                    },
                     _ => {
-                        let result = apply_command(key, &mut buffer, &cursor);
-                        buffer_changes = result.0;
-                        cursor = result.1;
+                        let (changes, new_cursor) = apply_command(key, &mut buffer, &cursor);
+                        buffer_changes = changes;
+                        cursor = new_cursor;
                     },
                 }
             },
             _ => { }
         };
 
-        if cursor.y >= display.vertical_offset + display.height {
-            // scroll down
+        if cursor.y >= display.vertical_offset + display.height { // scroll down
             display.vertical_offset += 1;
             buffer_changes = BufferChanges::Buffer;
         }
-        else if cursor.y < display.vertical_offset {
-            // scroll up
+        else if cursor.y < display.vertical_offset { // scroll up
             display.vertical_offset -= 1;
             buffer_changes = BufferChanges::Buffer;
         }
 
-        // only render buffer changes if there's been any
+        // render buffer changes and new cursor
         display.render_buffer_changes(&buffer, buffer_changes);
         display.render_cursor(&cursor, display.vertical_offset);
         display.flush();
